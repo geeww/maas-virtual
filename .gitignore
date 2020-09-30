@@ -1,0 +1,5 @@
+user-data.tmp
+id_rsa*
+*.img
+*.qcow2
+*.cfg
