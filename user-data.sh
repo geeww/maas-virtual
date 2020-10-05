@@ -1,32 +1,10 @@
-# disable ipv6
-echo 'net.ipv6.conf.all.disable_ipv6 = 1' >> /etc/sysctl.d/99-hardening.conf
-echo 'net.ipv6.conf.default.disable_ipv6 = 1' >> /etc/sysctl.d/99-hardening.conf
-
-# enable ip fowarding
-sed -i 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/g' /etc/sysctl.conf
-
-# activate
-sysctl --system
-
-# disable motd
-systemctl stop motd-news.service motd-news.timer
-systemctl disable motd-news.timer
-
 # install packages
 DEBIAN_FRONTEND=noninteractive
 apt update
-apt -y install qemu-guest-agent jq
-
-# enable NAT
-iptables -t nat -A POSTROUTING -o enp2s0 -j MASQUERADE
-
-# configure debconf to autosave iptables rules and install iptables-persistent 
-echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections
-echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections
-apt -y install iptables-persistent
+apt-get -y install qemu-guest-agent jq
 
 # KVM
-apt -y install qemu-kvm libvirt-bin virt-manager
+apt-get -y install qemu-kvm libvirt-bin virt-manager
 ## enable insecure tcp listener
 sed -i 's/#libvirtd_opts=""/libvirtd_opts="-l"/' /etc/default/libvirtd
 sed -i 's/#listen_tcp = 1/listen_tcp = 1/g' /etc/libvirt/libvirtd.conf
@@ -38,7 +16,7 @@ systemctl restart libvirtd
 cat << EOF > maas.xml
 <network>
   <name>maas</name>
-  <forward mode='nat'>
+    <forward mode='nat'>
     <nat>
       <port start='1024' end='65535'/>
     </nat>
@@ -61,7 +39,7 @@ virsh pool-autostart default
 virsh pool-start default
 
 # install and configure postgres for MAAS
-apt -y install postgresql
+apt-get -y install postgresql
 sudo --user postgres psql -c "CREATE USER \"$MAAS_DBUSER\" WITH ENCRYPTED PASSWORD '$MAAS_DBPASS'"
 sudo --user postgres createdb -O "$MAAS_DBUSER" "$MAAS_DBNAME"
 echo "host    $MAAS_DBNAME    $MAAS_DBUSER    0/0     md5" >> /etc/postgresql/10/main/pg_hba.conf
@@ -70,7 +48,7 @@ echo "host    $MAAS_DBNAME    $MAAS_DBUSER    0/0     md5" >> /etc/postgresql/10
 snap install maas --channel=${MAAS_VERSION}
 
 # init MAAS
-echo "http://${MAAS_HOSTNAME}.${MAAS_DOMAIN}:5240/MAAS" | maas init region+rack --database-uri "postgres://$MAAS_DBUSER:$MAAS_DBPASS@localhost/$MAAS_DBNAME"
+echo "http://${MAAS_IP}:5240/MAAS" | maas init region+rack --database-uri "postgres://$MAAS_DBUSER:$MAAS_DBPASS@localhost/$MAAS_DBNAME"
 
 # create MAAS admin user
 maas createadmin --username ${USERNAME} --password ${PASSWORD} --email ${EMAIL}
@@ -79,7 +57,7 @@ APIKEY=$(maas apikey --generate --username ${USERNAME})
 sleep 5
 
 # login to MAAS for root user
-maas login ${PROFILE} http://${MAAS_HOSTNAME}.${MAAS_DOMAIN}:5240/MAAS/api/2.0/ ${APIKEY}
+maas login ${PROFILE} http://${MAAS_IP}:5240/MAAS/api/2.0/ ${APIKEY}
 
 # admin user sshkey
 maas ${PROFILE} sshkeys create "key=$(cat /home/ubuntu/.ssh/authorized_keys)"
@@ -88,11 +66,12 @@ maas ${PROFILE} sshkeys create "key=$(cat /home/ubuntu/.ssh/authorized_keys)"
 maas ${PROFILE} maas set-config name=upstream_dns value=${DNS_SERVER}
 
 # determine networking id information
-SUBNET_ID=$(maas ${PROFILE} subnet read ${MAAS_SUBNET} | jq .id)
-FABRIC_ID=$(maas ${PROFILE} subnet read ${MAAS_SUBNET} | jq .vlan.fabric_id)
-VLAN_ID=$(maas ${PROFILE} subnet read ${MAAS_SUBNET} | jq .vlan.vid)
+SUBNET_INFO=$(maas ${PROFILE} subnet read ${MAAS_SUBNET})
+FABRIC_ID=$(echo ${SUBNET_INFO} | jq -r .vlan.fabric_id)
+VLAN_ID=$(echo ${SUBNET_INFO} | jq -r .vlan.vid)
+SUBNET_ID=$(echo ${SUBNET_INFO} | jq -r .id)
 
-# configure DHCP pool for 
+# dhcp pool 
 maas ${PROFILE} ipranges create start_ip=${DHCP_START} end_ip=${DHCP_END} subnet=${SUBNET_ID} type=dynamic
 
 # vlans

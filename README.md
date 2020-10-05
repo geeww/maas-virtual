@@ -5,14 +5,17 @@
   - [Configuration](#configuration)
   - [Networking](#networking)
     - [Default libvirt network](#default-libvirt-network)
-    - [MAAS network](#maas-network)
+    - [Nested VM NAT](#nested-vm-nat)
   - [Creating the environment](#creating-the-environment)
   - [Restarting the environment](#restarting-the-environment)
   - [Logging in](#logging-in)
     - [virsh console](#virsh-console)
     - [SSH](#ssh)
   - [MAAS CLI](#maas-cli)
+  - [MAAS UI](#maas-ui)
   - [Destroying and cleaning the environment](#destroying-and-cleaning-the-environment)
+  - [Libvirt snapshots](#libvirt-snapshots)
+  - [Troubleshooting](#troubleshooting)
   - [Links](#links)
 
 ## Preface
@@ -29,34 +32,10 @@ Configurables are located in the `.env` file
 
 ## Networking 
 ### Default libvirt network
-This project assumes that libvirt is installed and the default network exists, that provides DHCP and NAT for MAAS and nested VMs to access the internet. The second interface of the MAAS KVM host will be attached to it.
+This project assumes that libvirt is installed and the default network exists, that provides DHCP and NAT for MAAS and nested VMs to access the internet
 
-### MAAS network
-A MAAS-compatible network must exist on the bare-metal host. MAAS will manage this network.
-
-To create this network
-```
-source .env
-cat << EOF > maas.xml
-<network>
-  <name>maas</name>
-  <forward mode='nat'>
-    <nat>
-      <port start='1024' end='65535'/>
-    </nat>
-  </forward>
-  <dns enable='no'/>
-  <bridge name='virbr1' stp='off' delay='0'/>
-  <domain name='${MAAS_DOMAIN}'/>
-  <ip address='${KVM_ROUTER_IP}' netmask='255.255.255.0'>
-  </ip>
-</network>
-EOF
-virsh net-define maas.xml
-rm maas.xml
-virsh net-start maas
-virsh net-autostart maas
-```
+### Nested VM NAT
+Nested VMs will access the internet via NAT, via the `maas` network defined on the MAAS server
 
 ## Creating the environment
 After `source`ing the environment variables in `.env`
@@ -97,8 +76,17 @@ ssh -i id_rsa ubuntu@${MAAS_NAT_IP}
 The root user is automatically logged in to MAAS
 ```
 MAAS_NAT_IP=$(virsh domifaddr --domain ${MAAS_HOSTNAME} | grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}')
-ssh -i id_rsa ubuntu@${MAAS_NAT_IP} sudo maas ${MAAS_HOSTNAME} help
+ssh -i id_rsa ubuntu@${MAAS_NAT_IP} sudo maas ${PROFILE} help
 ```
+
+## MAAS UI
+Install a web browser on the MAAS VM (Firefox in this case) and open `http://${MAAS_IP}:5240`
+```
+MAAS_NAT_IP=$(virsh domifaddr --domain ${MAAS_HOSTNAME} | grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}')
+ssh -i id_rsa ubuntu@${MAAS_NAT_IP} "sudo apt-get -y install firefox; \
+  firefox http://${MAAS_IP}:5240"
+```
+Use the `USERNAME` and `PASSWORD` from the environment `.env` file to login
 
 ## Destroying and cleaning the environment
 Remove MAAS and nested VMs, ssh keys and qcow files
@@ -106,9 +94,25 @@ Remove MAAS and nested VMs, ssh keys and qcow files
 ./maas-virtual-clean.sh
 ```
 
+## Libvirt snapshots
+libvirt can be utilized for snapshots to save rebuilding from scratch each time a pristine MAAS environment is required
+```
+# create a snapshot
+virsh snapshot-create --domain ${MAAS_HOSTNAME}
+
+# restore snapshot
+virsh snapshot-revert maas-dev --current
+
+# delete current snapshot
+virsh snapshot-delete --domain ${MAAS_HOSTNAME} --current
+```
+
+## Troubleshooting
+- MAAS VM and nested VM crash during deployment?
+  Check if huge pages are enabled and try disabling them on the bare metal host
+
 ## Links
 - http://maas.io/
 - https://maas.io/docs/advanced-cli-tasks
 - https://maas.io/docs/composable-hardware
 - https://discourse.maas.io/t/setting-up-a-flexible-virtual-maas-test-environment/142
-
